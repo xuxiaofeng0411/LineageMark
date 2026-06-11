@@ -44,7 +44,7 @@ save_subspace=""        #可选：保存子空间数据的路径
 
 run_dssa_insert () {
     log_file="${log_path}-insert-mark1-nomark.log"
-    python -u pipelines_multi/dssa_insert_watermark_multi.py \
+    python -u dssa_insert_watermark_multi.py \
     --model $model_path \
     --k $k \
     --hidden_size $hidden_size \
@@ -72,7 +72,7 @@ run_dssa_insert () {
 
 run_dssa_extract () {
     log_file="${log_path}-extract-mark1-nomark.log"
-    python -u pipelines_multi/dssa_extract_watermark_multi.py \
+    python -u dssa_extract_watermark_multi.py \
         --password "$password" \
         --model "$save_model" \
         --hidden_size "$hidden_size" \
@@ -87,15 +87,6 @@ run_dssa_extract () {
         --seed "$seed" > "$log_file" 2>&1
     grep -E "Real watermark|Extract watermark|Extract ACC" "$log_file" | tail -3
     echo "=============== dssa extract done! --> $save_model "
-}
-
-quant_model () {
-    log_file="${log_dir}${model_name}-quanted.log"
-    python -u quant_multi/gptq_model.py \
-    --model_path "$model_path" \
-    --quant_path "$quant_path" \
-    --model_seqlen $model_seqlen > "$log_file" 2>&1
-    echo "=============== quant model done! ${model_name} --> ${quant_name} "
 }
 
 model_path="/root/autodl-tmp/models/facebook/opt-125m"
