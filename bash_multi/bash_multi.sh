@@ -1,46 +1,45 @@
 #!/bin/bash
-
-# source /etc/network_turbo #学术加速
-export HF_ENDPOINT="https://hf-mirror.com" #HF镜像网站
-
-#全局路径参数
 model_dir="../models/"
 log_dir="../logs/"
-
-#全局模型参数
+#模型参数
 cuda_device=0
 export CUDA_VISIBLE_DEVICES=$cuda_device
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 model_name="facebook/opt-125m"
 quant_name="facebook/opt-125m"
-hidden_size=768       #水印嵌入需要
-model_seqlen=768       #模型量化需要
-# model_path="${model_dir}${model_name}" 或者 "${model_dir}${quant_name}"
-# log_path="${log_dir}${model_name}" 或者 "${log_dir}${quant_name}"
+hidden_size=768       #根据不同的模型使用对应的隐藏层维度
+model_seqlen=768  
+#水印参数
 
-#全局水印参数
+#user 1
 #watermark="mark"
-#watermark="bear"    #（重水印攻击时更换mark）【用于所有方法】
-watermark="they"
-#watermark="look"
-#seed=100            #（随机修改攻击和重水印攻击时更换seed）【用于RandomMark】
-#seed=62
-#seed=77
-#seed=35
-#password="asdfqwer" #（重水印攻击时更换password）
+#seed=100    
+#password="asdfqwer" 
+
+#user 2
+#watermark="bear"
 #password="qihdnbji"
+#seed=62
+
+#user 3
+#watermark="they"
 #password="abcdefgh"
+#seed=77
+
+#user 4
+#watermark="look"
 #password="jiqwmnvb"
-#password="jaijnehf"
-#全局DSSA参数
+#seed=35
+
+#稳定空间探索参数
 k=64                    #子空间方向数量
 tau_lower=0.1           #谱截断下界
 tau_upper=0.9           #谱截断上界
 epsilon=1e-6            #GEVP正则化
 select_ratio=0.75       #每行选择列的比例
-dssa_block_chunk=2      # blocks per DSSA stats pass; 0 means all blocks for OPT-125M
-dssa_calib_batch_size=8  # fixed calibration samples per forward/backward
+dssa_block_chunk=2      #blocks per DSSA stats pass; 0 means all blocks for OPT-125M
+dssa_calib_batch_size=8 #fixed calibration samples per forward/backward
 save_subspace=""        #可选：保存子空间数据的路径
 
 run_dssa_insert () {
@@ -99,34 +98,26 @@ quant_model () {
     echo "=============== quant model done! ${model_name} --> ${quant_name} "
 }
 
-#model_path="${model_dir}${model_name}"
 model_path="/root/autodl-tmp/models/facebook/opt-125m"
-#quant_path="/root/autodl-tmp/models/opt-125m-mark3-nomark-quant"
+save_model="/root/autodl-tmp/models/facebook/pubmed/opt-125m-mark4-nomark"
 log_path="${log_dir}${model_name}"
 mkdir -p "$(dirname "$log_path")"
 
-xi=4            #[2, 4] -> 全精度选4 8bit选2
-position_num=12   #[6, 12] -> 全精度选12 8bit选6
+xi=4           
+position_num=12   
 delta=20
 wm_method="projection"
 projection_margin=0.5
 projection_max_update=0.0
-mode="simple"    #攻击时改为robust
-nsamples=512     #DSSA标定样本数
+mode="simple"   
+nsamples=128
 
-# save_model="${model_path}-inserted-by-dssa1"
-save_model="/root/autodl-tmp/models/facebook/pubmed/opt-125m-mark4-nomark"
-#save_model="/root/autodl-tmp/models/opt-125m-mark1-finetuned-pubmed-matrix-optimize529"
-#save_subspace="/root/autodl-tmp/models/facebook/opt-125m-subspace-mark1.pt"
-
-#run_dssa_insert
+# run_dssa_insert
 # run_dssa_extract
-#quant_model
-# run_model_evaluate $save_model
-# delete_model $save_model
 
+
+# 假阳性验证密钥集合
 seed=114
-
 password="aK3mP9qR"
 run_dssa_extract
 password="X7tB2nLf"
