@@ -44,7 +44,7 @@ save_subspace=""        #可选：保存子空间数据的路径
 
 run_dssa_insert () {
     log_file="${log_path}-insert-mark1-nomark.log"
-    python -u dssa_insert_watermark_multi.py \
+    python -u dssa_multi/dssa_insert_watermark_multi.py \
     --model $model_path \
     --k $k \
     --hidden_size $hidden_size \
@@ -72,7 +72,7 @@ run_dssa_insert () {
 
 run_dssa_extract () {
     log_file="${log_path}-extract-mark1-nomark.log"
-    python -u dssa_extract_watermark_multi.py \
+    python -u dssa_multi/dssa_extract_watermark_multi.py \
         --password "$password" \
         --model "$save_model" \
         --hidden_size "$hidden_size" \
