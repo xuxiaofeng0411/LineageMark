@@ -1,50 +1,54 @@
 import torch
 import torch.nn as nn
-from bitsandbytes.nn import Linear8bitLt
 from auto_gptq.nn_modules.qlinear.qlinear_cuda_old import QuantLinear
+from bitsandbytes.nn import Linear8bitLt
 
-# Define WrappedGPT class
+
+LINEAR_LAYER_TYPES = (nn.Linear, Linear8bitLt, QuantLinear)
+
+
 class WrappedGPT:
     """
-    This class wraps a GPT layer for specific operations.
+    Track per-input-channel activation statistics for a wrapped linear module.
     """
 
     def __init__(self, layer, layer_id=0, layer_name="none", is_int8=False):
         self.layer = layer
-        if is_int8:
-            self.dev = self.layer.qweight.device
-            self.rows = layer.qweight.data.shape[-1]
-            self.columns = layer.qweight.data.shape[0] * 4
-        else:
-            self.dev = self.layer.weight.device
-            self.rows = layer.weight.data.shape[0]
-            self.columns = layer.weight.data.shape[1]
-
-        self.scaler_row = torch.zeros((self.columns), device=self.dev)
-        self.nsamples = 0
-
-        self.layer_id = layer_id 
+        self.layer_id = layer_id
         self.layer_name = layer_name
 
+        self.dev, self.rows, self.columns = self._read_layer_layout(is_int8)
+        self.scaler_row = torch.zeros(self.columns, device=self.dev)
+        self.nsamples = 0
+
+    def _read_layer_layout(self, is_int8):
+        if is_int8:
+            qweight = self.layer.qweight
+            return qweight.device, qweight.data.shape[-1], qweight.data.shape[0] * 4
+
+        weight = self.layer.weight
+        return weight.device, weight.data.shape[0], weight.data.shape[1]
+
+    def _reshape_linear_input(self, inp):
+        if not isinstance(self.layer, LINEAR_LAYER_TYPES):
+            return inp
+        if inp.dim() == 3:
+            inp = inp.reshape((-1, inp.shape[-1]))
+        return inp.t()
+
+    @staticmethod
+    def _ensure_batch_axis(inp):
+        if inp.dim() == 2:
+            return inp.unsqueeze(0)
+        return inp
+
+    def _merge_batch_statistics(self, inp, batch_size):
+        self.scaler_row *= self.nsamples / (self.nsamples + batch_size)
+        self.nsamples += batch_size
+        self.scaler_row += torch.norm(inp, p=2, dim=1) ** 2 / self.nsamples
+
     def add_batch(self, inp, out):
-        # print(self.layer_name)
-        # print(inp.shape)
-        if len(inp.shape) == 2:
-            inp = inp.unsqueeze(0)
-        # print(inp.shape)
-        tmp = inp.shape[0]
-        # print(f'tmp: {tmp}')
-        if isinstance(self.layer, nn.Linear) or isinstance(self.layer, Linear8bitLt) or isinstance(self.layer, QuantLinear):
-            if len(inp.shape) == 3:
-                inp = inp.reshape((-1, inp.shape[-1]))
-            inp = inp.t()
-        # print(inp.shape)
-        # print(self.scaler_row.shape)
-        # print(f'row: {self.rows}')
-        # print(f'column: {self.columns}')
-        self.scaler_row *= self.nsamples / (self.nsamples+tmp)
-        self.nsamples += tmp
-
-        # inp = inp.type(torch.float32)
-        self.scaler_row += torch.norm(inp, p=2, dim=1) ** 2  / self.nsamples
-
+        inp = self._ensure_batch_axis(inp)
+        batch_size = inp.shape[0]
+        inp = self._reshape_linear_input(inp)
+        self._merge_batch_statistics(inp, batch_size)
