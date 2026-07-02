@@ -9,11 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + '/../')
 import numpy as np
 import torch
 from transformers import AutoTokenizer
-
 from lib_multi.insert_multi import insert_watermark
 from lib_multi.subspace_multi import select_subspace
 from lib_multi.utils_multi import format_time, get_llm
-
 
 def _cpu_recursive(obj):
     if isinstance(obj, torch.Tensor):
@@ -24,17 +22,14 @@ def _cpu_recursive(obj):
         return [_cpu_recursive(value) for value in obj]
     return obj
 
-
 def _add_arguments(parser, specs):
     for flags, kwargs in specs:
         parser.add_argument(*flags, **kwargs)
-
 
 def _build_parser():
     parser = argparse.ArgumentParser(
         description="DSSA: Matrix-level Subspace Selection + Watermark Insertion"
     )
-
     dssa_arguments = [
         (('--k',), dict(type=int, default=64,
                        help='Number of subspace directions per matrix (default: 64)')),
@@ -50,6 +45,9 @@ def _build_parser():
                                        help='Blocks to process per calibration pass; 0 means all blocks')),
         (('--dssa_calib_batch_size',), dict(type=int, default=1,
                                             help='Calibration samples per forward/backward pass; 1 preserves old memory use')),
+        (('--subspace_method',), dict(type=str, default='full',
+                                      choices=['full', 'fisher_only', 'ca_only'],
+                                      help='Stable-space solver: full uses Fisher+C_A GEVP; fisher_only uses top Fisher EVP; ca_only uses bottom C_A EVP')),
     ]
     watermark_arguments = [
         (('--hidden_size',), dict(type=int, required=True,
@@ -88,7 +86,7 @@ def _build_parser():
         (('--seed',), dict(type=int, default=42,
                            help='Random seed (default: 42)')),
         (('--select_ratio',), dict(type=float, default=0.75,
-                                   help='Fraction of columns to select per row in W_mask (default: 0.75)')),
+                                   help='Fraction of matrix coordinates to select globally in W_mask (default: 0.75)')),
         (('--dataset',), dict(type=str, default='wikitext2',
                               choices=['wikitext2'],
                               help='Calibration dataset (default: wikitext2)')),
@@ -99,7 +97,6 @@ def _build_parser():
     for group in (dssa_arguments, watermark_arguments, common_arguments):
         _add_arguments(parser, group)
     return parser
-
 
 def print_config(args):
     print("Config parameters:")
@@ -115,6 +112,7 @@ def print_config(args):
         ("  + select_ratio:       ", args.select_ratio),
         ("  + dssa_block_chunk:   ", args.dssa_block_chunk),
         ("  + dssa_calib_batch_size: ", args.dssa_calib_batch_size),
+        ("  + subspace_method:    ", args.subspace_method),
         ("  + dataset:            ", args.dataset),
         ("  + hidden_size:        ", args.hidden_size),
         ("  + watermark:          ", args.watermark),
@@ -135,11 +133,9 @@ def print_config(args):
     if args.save_subspace:
         print(f"  + save_subspace:      {args.save_subspace}")
 
-
 def _seed_everything(seed):
     np.random.seed(seed)
     torch.random.manual_seed(seed)
-
 
 def _load_model_and_tokenizer(model_name):
     print("*" * 60)
@@ -148,7 +144,6 @@ def _load_model_and_tokenizer(model_name):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     return model, tokenizer
-
 
 def _run_subspace_selection(args, model, tokenizer, device):
     print("\n" + "=" * 60)
@@ -171,10 +166,10 @@ def _run_subspace_selection(args, model, tokenizer, device):
         seed=args.seed,
         dssa_block_chunk=args.dssa_block_chunk,
         calib_batch_size=args.dssa_calib_batch_size,
+        subspace_method=args.subspace_method,
     )
     format_time(time.time() - start_time, "Matrix-level DSSA subspace selection")
     return result
-
 
 def _watermark_config(args):
     return {
@@ -185,6 +180,7 @@ def _watermark_config(args):
         'select_ratio': args.select_ratio,
         'dssa_block_chunk': args.dssa_block_chunk,
         'dssa_calib_batch_size': args.dssa_calib_batch_size,
+        'subspace_method': args.subspace_method,
         'hidden_size': args.hidden_size,
         'gamma_1': args.gamma_1,
         'xi': args.xi,
@@ -200,7 +196,6 @@ def _watermark_config(args):
         'subspace_scope': 'matrix_output',
     }
 
-
 def _save_subspace_if_requested(args, result, all_masks):
     if not args.save_subspace:
         return
@@ -213,7 +208,6 @@ def _save_subspace_if_requested(args, result, all_masks):
     save_dict['watermark_config'] = _watermark_config(args)
     torch.save(save_dict, args.save_subspace)
     print(f"Matrix subspaces and watermark map saved to: {args.save_subspace}")
-
 
 def _insert_with_dssa(args, model, tokenizer, device, all_masks):
     print("\n" + "=" * 60)
@@ -228,36 +222,29 @@ def _insert_with_dssa(args, model, tokenizer, device, all_masks):
     format_time(time.time() - start_time, "Watermark insertion")
     return change_weight_num, total_weight_num
 
-
 def _save_watermarked_model(args, model, tokenizer):
     print("*" * 60)
     model.save_pretrained(args.save_model, safe_serialization=False)
     tokenizer.save_pretrained(args.save_model)
     print(f"Watermarked model saved to: {args.save_model}")
 
-
 def main():
     args = _build_parser().parse_args()
     _seed_everything(args.seed)
     print_config(args)
-
     model, tokenizer = _load_model_and_tokenizer(args.model)
     device = torch.device("cuda")
-
     subspace_result = _run_subspace_selection(args, model, tokenizer, device)
     all_masks = subspace_result['all_layer_masks']
     _save_subspace_if_requested(args, subspace_result, all_masks)
-
     change_weight_num, total_weight_num = _insert_with_dssa(
         args, model, tokenizer, device, all_masks
     )
     _save_watermarked_model(args, model, tokenizer)
-
     print("*" * 60)
     print("Matrix-level DSSA watermark insertion complete!")
     print(f"Total changed weights: {change_weight_num} / {total_weight_num} "
           f"({change_weight_num / total_weight_num * 100:.2f}%)")
-
 
 if __name__ == '__main__':
     main()
