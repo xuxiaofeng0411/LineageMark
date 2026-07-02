@@ -1,4 +1,4 @@
-# finetune_opt13b_full.py
+# full_finetune_13b.py
 import os
 import math
 import inspect
