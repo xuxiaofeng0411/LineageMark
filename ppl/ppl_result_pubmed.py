@@ -6,13 +6,11 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-
 import torch
 from datasets import DownloadConfig, load_dataset, load_from_disk
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator
-
 
 DOMAIN = "pubmed"
 DATASET_CACHE_DIR = "/root/autodl-tmp/datasets"
@@ -28,13 +26,11 @@ MODEL_SPECS = [
     ("pubmed_watermark_stage3", "/root/autodl-tmp/models/facebook/pubmed/opt-125m-mark3-nomark"),
     ("pubmed_watermark_stage4", "/root/autodl-tmp/models/facebook/pubmed/opt-125m-mark4-nomark"),
 ]
-
 DOMAIN_DATASETS = [
     ("pubmed_stage1", "/root/autodl-tmp/datasets/processed_pubmed1_35k"),
     ("pubmed_stage2", "/root/autodl-tmp/datasets/processed_pubmed2_35k"),
     ("pubmed_stage3", "/root/autodl-tmp/datasets/processed_pubmed3_35k"),
 ]
-
 
 @dataclass
 class EvalResult:
@@ -46,7 +42,6 @@ class EvalResult:
     token_accuracy: float | None
     loss_tokens: int
     elapsed_sec: float
-
 
 class TokenizedTextDataset(Dataset):
     def __init__(self, input_ids, block_size):
@@ -64,16 +59,13 @@ class TokenizedTextDataset(Dataset):
         ids = self.input_ids[start : start + self.block_size]
         return {"input_ids": ids, "attention_mask": torch.ones_like(ids), "labels": ids.clone()}
 
-
 def setup_environment():
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     torch.backends.cuda.matmul.allow_tf32 = True
 
-
 def safe_ppl(loss):
     return math.exp(loss) if loss < 100 else float("inf")
-
 
 def format_time(seconds):
     minutes, sec = divmod(int(seconds), 60)
@@ -83,7 +75,6 @@ def format_time(seconds):
     if minutes:
         return f"{minutes}m {sec}s"
     return f"{sec}s"
-
 
 def require_paths():
     missing = []
@@ -95,7 +86,6 @@ def require_paths():
             missing.append(str(Path(path, "val")))
     if missing:
         raise FileNotFoundError("Missing required paths:\n" + "\n".join(missing))
-
 
 def load_model_and_tokenizer(model_name, model_path):
     print("\n" + "=" * 80)
@@ -116,7 +106,6 @@ def load_model_and_tokenizer(model_name, model_path):
     model.config.use_cache = False
     model.config.pad_token_id = tokenizer.pad_token_id
     return model, tokenizer
-
 
 def load_wikitext_raw_split():
     attempts = [
@@ -142,7 +131,6 @@ def load_wikitext_raw_split():
             errors.append(f"{path}, cache={cache_dir}, local_only={local_only}: {type(exc).__name__}: {exc}")
     raise RuntimeError("Could not load WikiText-2 test split:\n" + "\n".join(errors))
 
-
 def load_wikitext_dataset(tokenizer, block_size, max_blocks=None):
     raw = load_wikitext_raw_split()
     text = "\n\n".join(t for t in raw["text"] if t and not t.isspace())
@@ -153,13 +141,11 @@ def load_wikitext_dataset(tokenizer, block_size, max_blocks=None):
     print(f"WikiText blocks: {len(dataset)}, tokens: {dataset.input_ids.numel()}")
     return dataset
 
-
 def load_domain_dataset(dataset_path, split_name):
     split_path = Path(dataset_path) / split_name
     dataset = load_from_disk(str(split_path))
     print(f"Loaded {split_path}: samples={len(dataset)}, columns={dataset.column_names}")
     return dataset
-
 
 def evaluate_dataset(model, dataset, model_name, model_path, dataset_name, batch_size, show_accuracy):
     device = next(model.parameters()).device
@@ -201,12 +187,10 @@ def evaluate_dataset(model, dataset, model_name, model_path, dataset_name, batch
     print(f"elapsed: {format_time(result.elapsed_sec)}")
     return result
 
-
 def release_model(model, tokenizer):
     del model, tokenizer
     gc.collect()
     torch.cuda.empty_cache()
-
 
 def print_result_table(results):
     print("\n" + "=" * 100)
@@ -219,14 +203,12 @@ def print_result_table(results):
         acc = "-" if result.token_accuracy is None else f"{result.token_accuracy:.4%}"
         print(f"{result.model_name:32s} {result.dataset_name:18s} {result.eval_loss:10.6f} {result.ppl:12.6f} {acc:>12s} {result.loss_tokens:12d}")
 
-
 def save_results(results, output_json):
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     payload = {"domain": DOMAIN, "results": [asdict(result) for result in results]}
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     print(f"Saved results: {output_json}")
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -238,7 +220,6 @@ def parse_args():
     parser.add_argument("--output_json", default=None)
     return parser.parse_args()
 
-
 def main():
     args = parse_args()
     setup_environment()
@@ -246,7 +227,6 @@ def main():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for PPL evaluation.")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
-
     domain_datasets = [(name, load_domain_dataset(path, args.split)) for name, path in DOMAIN_DATASETS]
     results = []
     for model_name, model_path in MODEL_SPECS:
@@ -260,7 +240,6 @@ def main():
         release_model(model, tokenizer)
     print_result_table(results)
     save_results(results, args.output_json or OUTPUT_JSON)
-
 
 if __name__ == "__main__":
     main()
