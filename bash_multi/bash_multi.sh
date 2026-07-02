@@ -1,17 +1,19 @@
 #!/bin/bash
+export HF_ENDPOINT="https://hf-mirror.com"
 model_dir="../models/"
 log_dir="../logs/"
-#模型参数
+
+# Model parameters
 cuda_device=0
 export CUDA_VISIBLE_DEVICES=$cuda_device
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 model_name="facebook/opt-125m"
 quant_name="facebook/opt-125m"
-hidden_size=768       #根据不同的模型使用对应的隐藏层维度
-model_seqlen=768  
-#水印参数
+hidden_size=768       
+model_seqlen=768
 
+# Watermark parameters
 #user 1
 #watermark="mark"
 #seed=100    
@@ -32,19 +34,20 @@ model_seqlen=768
 #password="jiqwmnvb"
 #seed=35
 
-#稳定空间探索参数
-k=64                    #子空间方向数量
-tau_lower=0.1           #谱截断下界
-tau_upper=0.9           #谱截断上界
-epsilon=1e-6            #GEVP正则化
-select_ratio=0.75       #每行选择列的比例
-dssa_block_chunk=2      #blocks per DSSA stats pass; 0 means all blocks for OPT-125M
-dssa_calib_batch_size=8 #fixed calibration samples per forward/backward
-save_subspace=""        #可选：保存子空间数据的路径
+# DSSA parameters
+k=64                       # subspace directions
+tau_lower=0.1              # spectral truncation lower bound
+tau_upper=0.9              # spectral truncation higher bound
+epsilon=1e-6               # GEVP
+select_ratio=0.75          # fraction of matrix coordinates selected globally
+dssa_block_chunk=2         # blocks per DSSA stats pass; 0 means all blocks
+dssa_calib_batch_size=8    # fixed calibration samples per forward/backward
+subspace_method="full"  # [full, fisher_only, ca_only]
 
+# insert watermark
 run_dssa_insert () {
-    log_file="${log_path}-insert-mark1-nomark.log"
-    python -u dssa_multi/dssa_insert_watermark_multi.py \
+    log_file="${log_path}-insert-mark1-full.log"
+    python -u pipelines_multi/dssa_insert_watermark_multi.py \
     --model $model_path \
     --k $k \
     --hidden_size $hidden_size \
@@ -63,6 +66,7 @@ run_dssa_insert () {
     --select_ratio $select_ratio \
     --dssa_block_chunk $dssa_block_chunk \
     --dssa_calib_batch_size $dssa_calib_batch_size \
+    --subspace_method $subspace_method \
     --nsamples $nsamples \
     --seed $seed \
     --save_model $save_model \
@@ -70,9 +74,10 @@ run_dssa_insert () {
     echo "=============== dssa insert done! ${model_path} --> ${save_model} "
 }
 
+# extract watermark
 run_dssa_extract () {
-    log_file="${log_path}-extract-mark1-nomark.log"
-    python -u dssa_multi/dssa_extract_watermark_multi.py \
+    log_file="${log_path}-extract-mark1-ca.log"
+    python -u pipelines_multi/dssa_extract_watermark_multi.py \
         --password "$password" \
         --model "$save_model" \
         --hidden_size "$hidden_size" \
@@ -89,22 +94,32 @@ run_dssa_extract () {
     echo "=============== dssa extract done! --> $save_model "
 }
 
+quant_model () {
+    log_file="${log_dir}${model_name}-quanted.log"
+    python -u quant_multi/gptq_model.py \
+    --model_path "$model_path" \
+    --quant_path "$quant_path" \
+    --model_seqlen $model_seqlen > "$log_file" 2>&1
+    echo "=============== quant model done! ${model_name} --> ${quant_name} "
+}
+
 model_path="/root/autodl-tmp/models/facebook/opt-125m"
-save_model="/root/autodl-tmp/models/facebook/pubmed/opt-125m-mark4-nomark"
+save_model="/root/autodl-tmp/models/facebook/opt-125m-mark1-full"
+save_subspace="/root/autodl-tmp/models/facebook/opt-125m-mark1-subspace-full"
 log_path="${log_dir}${model_name}"
 mkdir -p "$(dirname "$log_path")"
 
 xi=4           
 position_num=12   
-delta=20
+delta=20            # threshold
 wm_method="projection"
 projection_margin=0.5
 projection_max_update=0.0
 mode="simple"   
-nsamples=128
+nsamples=128        # number of calibration samples
 
-# run_dssa_insert
-# run_dssa_extract
+run_dssa_insert
+run_dssa_extract
 
 
 # 假阳性验证密钥集合
