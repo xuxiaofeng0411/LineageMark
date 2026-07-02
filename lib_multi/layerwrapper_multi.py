@@ -2,21 +2,16 @@ import torch
 import torch.nn as nn
 from auto_gptq.nn_modules.qlinear.qlinear_cuda_old import QuantLinear
 from bitsandbytes.nn import Linear8bitLt
-
-
 LINEAR_LAYER_TYPES = (nn.Linear, Linear8bitLt, QuantLinear)
-
 
 class WrappedGPT:
     """
     Track per-input-channel activation statistics for a wrapped linear module.
     """
-
     def __init__(self, layer, layer_id=0, layer_name="none", is_int8=False):
         self.layer = layer
         self.layer_id = layer_id
         self.layer_name = layer_name
-
         self.dev, self.rows, self.columns = self._read_layer_layout(is_int8)
         self.scaler_row = torch.zeros(self.columns, device=self.dev)
         self.nsamples = 0
@@ -25,7 +20,6 @@ class WrappedGPT:
         if is_int8:
             qweight = self.layer.qweight
             return qweight.device, qweight.data.shape[-1], qweight.data.shape[0] * 4
-
         weight = self.layer.weight
         return weight.device, weight.data.shape[0], weight.data.shape[1]
 
