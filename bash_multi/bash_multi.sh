@@ -15,9 +15,9 @@ model_seqlen=768
 
 # Watermark parameters
 #user 1
-#watermark="mark"
-#seed=100    
-#password="asdfqwer" 
+watermark="mark"
+seed=100    
+password="asdfqwer" 
 
 #user 2
 #watermark="bear"
