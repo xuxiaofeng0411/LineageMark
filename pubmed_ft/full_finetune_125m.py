@@ -13,9 +13,9 @@ from transformers import (
     EarlyStoppingCallback,
 )
 
-DATA_PATH = "/root/autodl-tmp/datasets/processed_pubmed3_35k"
-WATERMARKED_MODEL_PATH = "/root/autodl-tmp/models/facebook/opt-125m-mark3-nomark"
-FINETUNED_OUTPUT_DIR = "/root/autodl-tmp/models/opt-125m-mark3-nomark-ft-pubmed"
+DATA_PATH = "/root/autodl-tmp/datasets/processed_math3_35k"
+WATERMARKED_MODEL_PATH = "/root/autodl-tmp/models/facebook/opt-125m-mark1"
+FINETUNED_OUTPUT_DIR = "/root/autodl-tmp/models/facebook/opt-125m-mark1-1e3"
 EXPECTED_WATERMARK_DTYPE = torch.float16
 
 def setup_environment():
@@ -23,7 +23,7 @@ def setup_environment():
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     os.environ["TRANSFORMERS_OFFLINE"] = "0"
 
-def load_and_prepare_data(data_path="/root/autodl-tmp/datasets/processed_pubmed3_35k"):
+def load_and_prepare_data(data_path="/root/autodl-tmp/datasets/processed_math3_35k"):
     print("=" * 60)
     print("加载处理好的数据集...")
     print("=" * 60)
@@ -134,7 +134,7 @@ def finetune_model(
     tokenizer,
     train_dataset,
     val_dataset,
-    output_dir="/root/autodl-tmp/models/opt-125m-mark3-nomark-ft-pubmed",
+    output_dir="/root/autodl-tmp/models/opt-125m-mark3-nomark-ft-math",
     num_epochs=2,
     batch_size=16,
     gradient_accumulation_steps=4,
@@ -259,10 +259,10 @@ def main():
         train_dataset=train_dataset,
         val_dataset=val_dataset,
         output_dir=output_dir,
-        num_epochs=2,
+        num_epochs=4,
         batch_size=16,
         gradient_accumulation_steps=4,
-        learning_rate=5e-6,
+        learning_rate=1e-3,
         use_wandb=False,
         early_stopping_patience=None,
         save_dtype=model_dtype,
