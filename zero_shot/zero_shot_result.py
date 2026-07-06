@@ -4,20 +4,17 @@ import json
 import os
 import time
 from dataclasses import dataclass
-
 import torch
 import torch.nn.functional as F
 from datasets import DownloadConfig, load_dataset
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
 DATASET_CACHE_DIR = "/root/autodl-tmp/datasets"
 DEFAULT_OUTPUT_JSON = (
     "/root/autodl-tmp/project12-matrix-optimize-nomark/outputs/"
     "multi_stage_zero_shot_results.json"
 )
-
 MODEL_SPECS = [
     ("original", "/root/autodl-tmp/models/facebook/opt-125m"),
     ("watermark_1", "/root/autodl-tmp/models/facebook/opt-125m-mark1-nomark"),
@@ -29,13 +26,11 @@ MODEL_SPECS = [
     ("watermark_4", "/root/autodl-tmp/models/facebook/opt-125m-mark4-nomark"),
 ]
 
-
 @dataclass
 class ChoiceExample:
     prompt: str
     choices: list[str]
     label: int
-
 
 @dataclass
 class TaskResult:
@@ -47,13 +42,11 @@ class TaskResult:
     total: int
     elapsed_sec: float
 
-
 def setup_environment():
     os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
     os.environ["HF_DATASETS_OFFLINE"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     torch.backends.cuda.matmul.allow_tf32 = True
-
 
 def format_time(seconds):
     minutes, sec = divmod(int(seconds), 60)
@@ -63,7 +56,6 @@ def format_time(seconds):
     if minutes:
         return f"{minutes}m {sec}s"
     return f"{sec}s"
-
 
 def load_cached_dataset(path, name=None, split="validation"):
     attempts = [(None, True), (DATASET_CACHE_DIR, True)]
@@ -91,13 +83,11 @@ def load_cached_dataset(path, name=None, split="validation"):
             )
     raise RuntimeError(f"Could not load dataset {path}/{name}/{split}:\n" + "\n".join(errors))
 
-
 def normalize_choice(choice):
     choice = str(choice).strip()
     if not choice:
         return choice
     return " " + choice
-
 
 def build_piqa_examples(limit=None):
     dataset = load_cached_dataset("piqa", split="validation")
@@ -113,7 +103,6 @@ def build_piqa_examples(limit=None):
         if limit is not None and len(examples) >= limit:
             break
     return examples
-
 
 def build_hellaswag_examples(limit=None):
     dataset = load_cached_dataset("hellaswag", split="validation")
@@ -132,7 +121,6 @@ def build_hellaswag_examples(limit=None):
         if limit is not None and len(examples) >= limit:
             break
     return examples
-
 
 def build_winogrande_examples(limit=None):
     dataset = load_cached_dataset("winogrande", name="winogrande_xl", split="validation")
@@ -157,7 +145,6 @@ def build_winogrande_examples(limit=None):
             break
     return examples
 
-
 def load_task_examples(task_name, limit=None):
     if task_name == "piqa":
         return build_piqa_examples(limit)
@@ -167,7 +154,6 @@ def load_task_examples(task_name, limit=None):
         return build_winogrande_examples(limit)
     raise ValueError(f"Unsupported task: {task_name}")
 
-
 def load_model_and_tokenizer(model_name, model_path):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model path does not exist for {model_name}: {model_path}")
@@ -176,12 +162,10 @@ def load_model_and_tokenizer(model_name, model_path):
     print(f"Loading model: {model_name}")
     print("=" * 80)
     print(f"path: {model_path}")
-
     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.float16,
@@ -191,35 +175,28 @@ def load_model_and_tokenizer(model_name, model_path):
     model.eval()
     model.config.use_cache = False
     model.config.pad_token_id = tokenizer.pad_token_id
-
     print(f"parameter dtype: {next(model.parameters()).dtype}")
     print(f"device: {next(model.parameters()).device}")
     return model, tokenizer
-
 
 def encode_choice(tokenizer, prompt, choice, max_length):
     prompt_ids = tokenizer(prompt, add_special_tokens=False).input_ids
     choice_ids = tokenizer(choice, add_special_tokens=False).input_ids
     input_ids = prompt_ids + choice_ids
     label_mask = [False] * len(prompt_ids) + [True] * len(choice_ids)
-
     if len(input_ids) > max_length:
         overflow = len(input_ids) - max_length
         input_ids = input_ids[overflow:]
         label_mask = label_mask[overflow:]
-
     return input_ids, label_mask
-
 
 def score_choice_batch(model, tokenizer, encoded_choices, max_length):
     pad_id = tokenizer.pad_token_id
     device = next(model.parameters()).device
     max_len = min(max(len(ids) for ids, _ in encoded_choices), max_length)
-
     input_ids = torch.full((len(encoded_choices), max_len), pad_id, dtype=torch.long)
     attention_mask = torch.zeros((len(encoded_choices), max_len), dtype=torch.long)
     labels = torch.full((len(encoded_choices), max_len), -100, dtype=torch.long)
-
     for row, (ids, label_mask) in enumerate(encoded_choices):
         ids = ids[-max_len:]
         label_mask = label_mask[-max_len:]
@@ -229,11 +206,9 @@ def score_choice_batch(model, tokenizer, encoded_choices, max_length):
         for col, keep in enumerate(label_mask):
             if keep:
                 labels[row, col] = ids[col]
-
     input_ids = input_ids.to(device)
     attention_mask = attention_mask.to(device)
     labels = labels.to(device)
-
     with torch.no_grad():
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits[:, :-1, :].contiguous()
@@ -245,15 +220,12 @@ def score_choice_batch(model, tokenizer, encoded_choices, max_length):
             reduction="none",
             ignore_index=-100,
         ).view(shifted_labels.shape)
-
     loss_sum = (token_losses * valid).sum(dim=1)
     token_count = valid.sum(dim=1).clamp_min(1)
     scores = (loss_sum / token_count).detach().cpu().tolist()
-
     del outputs, logits, shifted_labels, valid, token_losses
     del input_ids, attention_mask, labels, loss_sum, token_count
     return scores
-
 
 def evaluate_task(model, tokenizer, model_name, task_name, examples, batch_size, max_length):
     start_time = time.time()
@@ -262,11 +234,9 @@ def evaluate_task(model, tokenizer, model_name, task_name, examples, batch_size,
     pending = []
     example_choice_counts = []
     example_labels = []
-
     print("\n" + "-" * 80)
     print(f"Evaluating {model_name} on {task_name}, examples={len(examples)}")
     print("-" * 80)
-
     def flush_batch():
         nonlocal correct, total, pending, example_choice_counts, example_labels
         if not pending:
@@ -282,7 +252,6 @@ def evaluate_task(model, tokenizer, model_name, task_name, examples, batch_size,
         pending = []
         example_choice_counts = []
         example_labels = []
-
     for example in tqdm(examples, desc=f"{model_name}/{task_name}"):
         encoded = [
             encode_choice(tokenizer, example.prompt, choice, max_length=max_length)
@@ -293,7 +262,6 @@ def evaluate_task(model, tokenizer, model_name, task_name, examples, batch_size,
         pending.extend(encoded)
         example_choice_counts.append(len(encoded))
         example_labels.append(example.label)
-
     flush_batch()
     elapsed = time.time() - start_time
     accuracy = correct / max(total, 1)
@@ -311,12 +279,10 @@ def evaluate_task(model, tokenizer, model_name, task_name, examples, batch_size,
         elapsed_sec=elapsed,
     )
 
-
 def release_model(model, tokenizer):
     del model, tokenizer
     gc.collect()
     torch.cuda.empty_cache()
-
 
 def parse_name_path_spec(spec, option_name):
     if "=" not in spec:
@@ -328,7 +294,6 @@ def parse_name_path_spec(spec, option_name):
         raise ValueError(f"{option_name} must use non-empty name=path format, got: {spec}")
     return name, path
 
-
 def parse_model_specs(args):
     if args.models_json:
         raw_specs = json.loads(args.models_json)
@@ -337,14 +302,12 @@ def parse_model_specs(args):
         return [parse_name_path_spec(item, "--model") for item in args.model]
     return list(MODEL_SPECS)
 
-
 def ensure_unique_model_names(model_specs):
     seen = set()
     for model_name, _ in model_specs:
         if model_name in seen:
             raise ValueError(f"Duplicate model name: {model_name}")
         seen.add(model_name)
-
 
 def validate_model_paths(model_specs, skip_missing_models):
     missing = [(name, path) for name, path in model_specs if not os.path.exists(path)]
@@ -359,14 +322,12 @@ def validate_model_paths(model_specs, skip_missing_models):
         return [(name, path) for name, path in model_specs if os.path.exists(path)]
     return model_specs
 
-
 def build_summary(results):
     by_model = {}
     by_task = {}
     for result in results:
         by_model.setdefault(result.model_name, []).append(result)
         by_task.setdefault(result.task_name, []).append(result)
-
     model_average_accuracy = {
         model_name: sum(item.accuracy for item in items) / len(items)
         for model_name, items in by_model.items()
@@ -382,7 +343,6 @@ def build_summary(results):
             }
             for item in sorted(items, key=lambda value: value.accuracy, reverse=True)
         ]
-
     return {
         "model_average_accuracy": model_average_accuracy,
         "task_rankings_by_accuracy": task_rankings,
@@ -393,7 +353,6 @@ def build_summary(results):
             "Winogrande validation splits loaded from the local HuggingFace cache."
         ),
     }
-
 
 def print_summary(results, output_json=None, model_specs=None, task_names=None, args=None):
     print("\n" + "=" * 80)
@@ -407,12 +366,10 @@ def print_summary(results, output_json=None, model_specs=None, task_names=None, 
             f"{result.model_name:38s} {result.task_name:12s} "
             f"{result.accuracy:12.6%} {result.correct:10d} {result.total:10d}"
         )
-
     print("\nAverage accuracy:")
     summary = build_summary(results)
     for model_name, accuracy in summary["model_average_accuracy"].items():
         print(f"{model_name:38s} avg_acc={accuracy:.6%}")
-
     if output_json:
         output_dir = os.path.dirname(output_json)
         if output_dir:
@@ -444,7 +401,6 @@ def print_summary(results, output_json=None, model_specs=None, task_names=None, 
             json.dump(payload, f, indent=2, ensure_ascii=False)
         print(f"\nSaved machine-readable results to: {output_json}")
 
-
 def print_config(model_specs, task_names, args):
     print("=" * 80)
     print("Configured zero-shot evaluation")
@@ -457,7 +413,6 @@ def print_config(model_specs, task_names, args):
     print("\nModels:")
     for idx, (model_name, model_path) in enumerate(model_specs, start=1):
         print(f"{idx}. {model_name}: {model_path}")
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -498,18 +453,14 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def main():
     args = parse_args()
     setup_environment()
-
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for evaluating OPT-125M in this script.")
-
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"GPU count: {torch.cuda.device_count()}")
     print(f"bf16 supported: {torch.cuda.is_bf16_supported()}")
-
     task_names = [task.strip() for task in args.tasks.split(",") if task.strip()]
     model_specs = parse_model_specs(args)
     ensure_unique_model_names(model_specs)
@@ -517,12 +468,10 @@ def main():
     if not model_specs:
         raise ValueError("No model paths are available for evaluation.")
     print_config(model_specs, task_names, args)
-
     task_examples = {
         task_name: load_task_examples(task_name, limit=args.limit)
         for task_name in task_names
     }
-
     results = []
     for model_name, model_path in model_specs:
         model, tokenizer = load_model_and_tokenizer(model_name, model_path)
@@ -540,7 +489,6 @@ def main():
                 )
             )
         release_model(model, tokenizer)
-
     print_summary(
         results,
         output_json=args.output_json,
@@ -548,7 +496,6 @@ def main():
         task_names=task_names,
         args=args,
     )
-
 
 if __name__ == "__main__":
     main()

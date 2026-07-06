@@ -1,5 +1,4 @@
 export HF_API_TOKEN="hf_YourHuggingfaceApiToken"
-#全局路径参数
 model_dir="../models/"
 log_dir="../logs/"
 model_name="EleutherAI/pythia-160m"

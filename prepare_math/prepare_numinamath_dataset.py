@@ -3,20 +3,16 @@ import json
 import os
 import shutil
 from pathlib import Path
-
 from datasets import load_dataset
 from transformers import AutoTokenizer
-
 
 DEFAULT_PARQUET_PATH = "/root/autodl-tmp/datasets/MONuminaMath-CoT.parquet"
 DEFAULT_MODEL_PATH = "/root/autodl-tmp/models/facebook/opt-125m"
 DEFAULT_OUTPUT_DIR = "/root/autodl-tmp/datasets/processed_math3_35k"
 
-
 def setup_environment():
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -34,7 +30,6 @@ def parse_args():
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
-
 def require_valid_args(args):
     if not Path(args.parquet_path).exists():
         raise FileNotFoundError(f"Parquet file does not exist: {args.parquet_path}")
@@ -47,19 +42,16 @@ def require_valid_args(args):
     if args.max_length <= 0:
         raise ValueError("--max_length must be positive")
 
-
 def clean_text(value):
     if value is None:
         return ""
     return " ".join(str(value).strip().split())
-
 
 def load_and_sample(args):
     print("=" * 60)
     print("Loading NuminaMath-CoT parquet")
     print("=" * 60)
     print(f"parquet_path: {args.parquet_path}")
-
     dataset = load_dataset("parquet", data_files=args.parquet_path, split="train")
     print(f"raw rows: {len(dataset)}")
     print(f"raw columns: {dataset.column_names}")
@@ -67,12 +59,10 @@ def load_and_sample(args):
     missing_columns = required_columns.difference(dataset.column_names)
     if missing_columns:
         raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
-
     def has_valid_fields(example):
         problem = clean_text(example.get("problem"))
         solution = clean_text(example.get("solution"))
         return len(problem) >= args.min_problem_chars and bool(solution)
-
     dataset = dataset.filter(has_valid_fields, num_proc=args.num_proc, desc="Filtering invalid NuminaMath examples")
     print(f"rows after filtering: {len(dataset)}")
     if len(dataset) < args.sample_size:
@@ -81,10 +71,8 @@ def load_and_sample(args):
     print(f"sampled rows: {len(sampled)}")
     return sampled
 
-
 def format_dataset(sampled, tokenizer, args):
     eos = tokenizer.eos_token or ""
-
     def format_batch(examples):
         texts = []
         sources = examples["source"] if "source" in examples else [""] * len(examples["problem"])
@@ -96,7 +84,6 @@ def format_dataset(sampled, tokenizer, args):
             parts.extend(["Problem:", clean_text(problem), "", "Solution:", clean_text(solution)])
             texts.append("\n".join(parts) + eos)
         return {"text": texts}
-
     return sampled.map(
         format_batch,
         batched=True,
@@ -105,10 +92,8 @@ def format_dataset(sampled, tokenizer, args):
         desc="Formatting NuminaMath examples",
     )
 
-
 def tokenize_and_split(formatted, tokenizer, args):
     split = formatted.train_test_split(test_size=1.0 - args.train_ratio, seed=args.seed)
-
     def tokenize_batch(examples):
         tokenized = tokenizer(
             examples["text"],
@@ -119,14 +104,12 @@ def tokenize_and_split(formatted, tokenizer, args):
         )
         tokenized["labels"] = [input_ids.copy() for input_ids in tokenized["input_ids"]]
         return tokenized
-
     tokenized = split.map(tokenize_batch, batched=True, remove_columns=["text"], num_proc=args.num_proc, desc="Tokenizing NuminaMath examples")
     train_dataset = tokenized["train"]
     val_dataset = tokenized["test"]
     train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     val_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     return train_dataset, val_dataset
-
 
 def save_outputs(train_dataset, val_dataset, tokenizer, args):
     output_dir = Path(args.output_dir)
@@ -164,7 +147,6 @@ def save_outputs(train_dataset, val_dataset, tokenizer, args):
     print(f"val:   {val_path} ({len(val_dataset)} samples)")
     print(f"stats: {output_dir / 'stats.json'}")
 
-
 def show_preview(train_dataset, tokenizer, num_examples=2):
     print("=" * 60)
     print("Preview")
@@ -172,7 +154,6 @@ def show_preview(train_dataset, tokenizer, num_examples=2):
     for idx in range(min(num_examples, len(train_dataset))):
         print(f"\n--- example {idx + 1} ---")
         print(tokenizer.decode(train_dataset[idx]["input_ids"], skip_special_tokens=True)[:1000])
-
 
 def main():
     setup_environment()
@@ -187,7 +168,6 @@ def main():
     train_dataset, val_dataset = tokenize_and_split(formatted, tokenizer, args)
     show_preview(train_dataset, tokenizer)
     save_outputs(train_dataset, val_dataset, tokenizer, args)
-
 
 if __name__ == "__main__":
     main()

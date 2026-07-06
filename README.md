@@ -1,14 +1,30 @@
 # LineageMark
 
-LineageMark is a multi-user white-box watermarking framework for large language model lineage tracing.
+LineageMark is a multi-user white-box watermarking framework for contribution tracing in large language model derivation chains.
 
-The project studies an open model ecosystem in which a base model is repeatedly derived by different users through full-parameter fine-tuning. Each derived model may contain contributions from the current user and all previous users in the lineage. LineageMark is designed to support:
+The project studies an open model ecosystem in which a base model is repeatedly derived by different users through full-parameter fine-tuning. Each derived model may contain contributions from the current user and all previous users in the lineage.
 
-- robust extraction of historical user watermarks after multiple rounds of full-parameter fine-tuning;
-- coexistence of multiple users' watermarks in one model lineage;
-- white-box verification of user contribution from model parameters.
+The motivating model-derivation scenario and the overall LineageMark framework are illustrated below.
 
-The current implementation uses DSSA-based matrix-level subspace selection and keyed statistical watermark embedding. In the default setting, each user provides an independent `password` and `watermark`, and the code derives the user's private watermark coordinates from the password.
+<p align="center">
+  <img src="./figures/scene.png"
+       alt="Multi-user watermarking scenario in model derivation chains"
+       width="900">
+</p>
+
+<p align="center">
+  <img src="./figures/workflow.png"
+       alt="Overview of the LineageMark framework"
+       width="900">
+</p>
+
+LineageMark is designed to support:
+
+- Robust extraction of historical user watermarks after multiple rounds of full-parameter fine-tuning.
+- Coexistence of multiple users' watermarks within the same model lineage.
+- White-box verification of user contributions from model parameters.
+
+The current implementation uses DSSA-based matrix-level subspace selection and keyed statistical watermark embedding. In the default setting, each user provides an independent password and watermark payload, and the code derives the user's private watermark coordinates from the password.
 
 ## Repository Structure
 

@@ -3,23 +3,18 @@ import json
 import os
 import shutil
 from pathlib import Path
-
 from datasets import load_dataset
 from transformers import AutoTokenizer
-
 
 DEFAULT_PARQUET_PATH = "/root/autodl-tmp/datasets/train-00000-of-00001.parquet"
 DEFAULT_MODEL_PATH = "/root/autodl-tmp/models/facebook/opt-125m"
 DEFAULT_OUTPUT_DIR = "/root/autodl-tmp/datasets/processed_medmcqa_35k"
-
 ANSWER_LABELS = ["A", "B", "C", "D"]
 OPTION_COLUMNS = ["opa", "opb", "opc", "opd"]
-
 
 def setup_environment():
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -53,11 +48,9 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def require_valid_args(args):
     parquet_path = Path(args.parquet_path)
     model_path = Path(args.model_path)
-
     if not parquet_path.exists():
         raise FileNotFoundError(f"Parquet file does not exist: {parquet_path}")
     if not model_path.exists():
@@ -71,31 +64,26 @@ def require_valid_args(args):
     if args.min_question_chars < 0:
         raise ValueError("--min_question_chars must be non-negative")
 
-
 def clean_text(value):
     if value is None:
         return ""
     return " ".join(str(value).strip().split())
-
 
 def parse_correct_option(value):
     try:
         answer_index = int(value)
     except (TypeError, ValueError):
         return None
-
     # araag2/MedMCQA source stores cop as 1-based: 1=A, 2=B, 3=C, 4=D.
     if 1 <= answer_index <= 4:
         return answer_index - 1
     return None
-
 
 def load_and_sample_medmcqa(args):
     print("=" * 60)
     print("Loading MedMCQA parquet")
     print("=" * 60)
     print(f"parquet_path: {args.parquet_path}")
-
     dataset = load_dataset(
         "parquet",
         data_files=args.parquet_path,
@@ -108,7 +96,6 @@ def load_and_sample_medmcqa(args):
     missing_columns = required_columns.difference(dataset.column_names)
     if missing_columns:
         raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
-
     def has_valid_medmcqa_fields(example):
         question = clean_text(example.get("question"))
         options = [clean_text(example.get(column)) for column in OPTION_COLUMNS]
@@ -118,7 +105,6 @@ def load_and_sample_medmcqa(args):
             and all(options)
             and correct_option is not None
         )
-
     dataset = dataset.filter(
         has_valid_medmcqa_fields,
         num_proc=args.num_proc,
@@ -130,15 +116,12 @@ def load_and_sample_medmcqa(args):
         raise ValueError(
             f"Not enough valid MedMCQA examples: requested {args.sample_size}, got {len(dataset)}"
         )
-
     sampled = dataset.shuffle(seed=args.seed).select(range(args.sample_size))
     print(f"sampled rows: {len(sampled)}")
     return sampled
 
-
 def format_dataset(sampled, tokenizer, args):
     eos = tokenizer.eos_token or ""
-
     def format_batch(examples):
         texts = []
         batch_size = len(next(iter(examples.values())))
@@ -152,13 +135,11 @@ def format_dataset(sampled, tokenizer, args):
             explanation = clean_text(example.get("exp"))
             subject = clean_text(example.get("subject_name"))
             topic = clean_text(example.get("topic_name"))
-
             parts = []
             if args.include_metadata and subject:
                 parts.extend(["Subject:", subject, ""])
             if args.include_metadata and topic:
                 parts.extend(["Topic:", topic, ""])
-
             parts.extend(
                 [
                     "Question:",
@@ -176,11 +157,8 @@ def format_dataset(sampled, tokenizer, args):
             )
             if args.use_explanation and explanation:
                 parts.extend(["", "Explanation:", explanation])
-
             texts.append("\n".join(parts) + eos)
-
         return {"text": texts}
-
     return sampled.map(
         format_batch,
         batched=True,
@@ -189,13 +167,11 @@ def format_dataset(sampled, tokenizer, args):
         desc="Formatting MedMCQA examples",
     )
 
-
 def tokenize_and_split(formatted, tokenizer, args):
     split = formatted.train_test_split(
         test_size=1.0 - args.train_ratio,
         seed=args.seed,
     )
-
     def tokenize_batch(examples):
         tokenized = tokenizer(
             examples["text"],
@@ -206,7 +182,6 @@ def tokenize_and_split(formatted, tokenizer, args):
         )
         tokenized["labels"] = [input_ids.copy() for input_ids in tokenized["input_ids"]]
         return tokenized
-
     tokenized = split.map(
         tokenize_batch,
         batched=True,
@@ -214,10 +189,8 @@ def tokenize_and_split(formatted, tokenizer, args):
         num_proc=args.num_proc,
         desc="Tokenizing MedMCQA examples",
     )
-
     train_dataset = tokenized["train"]
     val_dataset = tokenized["test"]
-
     train_dataset.set_format(
         type="torch",
         columns=["input_ids", "attention_mask", "labels"],
@@ -226,13 +199,10 @@ def tokenize_and_split(formatted, tokenizer, args):
         type="torch",
         columns=["input_ids", "attention_mask", "labels"],
     )
-
     return train_dataset, val_dataset
-
 
 def save_outputs(train_dataset, val_dataset, tokenizer, args):
     output_dir = Path(args.output_dir)
-
     if output_dir.exists():
         if not args.overwrite:
             raise FileExistsError(
@@ -240,16 +210,12 @@ def save_outputs(train_dataset, val_dataset, tokenizer, args):
                 "Pass --overwrite to replace it."
             )
         shutil.rmtree(output_dir)
-
     output_dir.mkdir(parents=True, exist_ok=True)
-
     train_path = output_dir / "train"
     val_path = output_dir / "val"
-
     train_dataset.save_to_disk(str(train_path))
     val_dataset.save_to_disk(str(val_path))
     tokenizer.save_pretrained(str(output_dir))
-
     stats = {
         "source_parquet": args.parquet_path,
         "model_path": args.model_path,
@@ -266,10 +232,8 @@ def save_outputs(train_dataset, val_dataset, tokenizer, args):
         "format": "causal_language_modeling",
         "task_format": "medmcqa_multiple_choice_qa",
     }
-
     with open(output_dir / "stats.json", "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2, ensure_ascii=False)
-
     print("=" * 60)
     print("Saved processed MedMCQA dataset")
     print("=" * 60)
@@ -277,7 +241,6 @@ def save_outputs(train_dataset, val_dataset, tokenizer, args):
     print(f"train: {train_path} ({len(train_dataset)} samples)")
     print(f"val:   {val_path} ({len(val_dataset)} samples)")
     print(f"stats: {output_dir / 'stats.json'}")
-
 
 def show_preview(train_dataset, tokenizer, num_examples=2):
     print("=" * 60)
@@ -289,12 +252,10 @@ def show_preview(train_dataset, tokenizer, num_examples=2):
         print(f"\n--- example {idx + 1} ---")
         print(text[:1000])
 
-
 def main():
     setup_environment()
     args = parse_args()
     require_valid_args(args)
-
     print("=" * 60)
     print("Loading tokenizer")
     print("=" * 60)
@@ -303,14 +264,11 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-
     sampled = load_and_sample_medmcqa(args)
     formatted = format_dataset(sampled, tokenizer, args)
     train_dataset, val_dataset = tokenize_and_split(formatted, tokenizer, args)
-
     show_preview(train_dataset, tokenizer)
     save_outputs(train_dataset, val_dataset, tokenizer, args)
-
 
 if __name__ == "__main__":
     main()

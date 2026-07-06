@@ -3,20 +3,16 @@ import json
 import os
 import shutil
 from pathlib import Path
-
 from datasets import load_dataset
 from transformers import AutoTokenizer
-
 
 DEFAULT_PARQUET_PATH = "/root/autodl-tmp/datasets/law3.parquet"
 DEFAULT_MODEL_PATH = "/root/autodl-tmp/models/facebook/opt-125m"
 DEFAULT_OUTPUT_DIR = "/root/autodl-tmp/datasets/processed_law3_35k"
 
-
 def setup_environment():
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -38,11 +34,9 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def require_valid_args(args):
     parquet_path = Path(args.parquet_path)
     model_path = Path(args.model_path)
-
     if not parquet_path.exists():
         raise FileNotFoundError(f"Parquet file does not exist: {parquet_path}")
     if not model_path.exists():
@@ -56,12 +50,10 @@ def require_valid_args(args):
     if args.min_text_chars < 0:
         raise ValueError("--min_text_chars must be non-negative")
 
-
 def clean_text(value):
     if value is None:
         return ""
     return " ".join(str(value).strip().split())
-
 
 def get_label_names(dataset):
     labels_feature = dataset.features.get("labels")
@@ -71,14 +63,12 @@ def get_label_names(dataset):
         return list(names)
     return []
 
-
 def normalize_labels(value):
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
         return list(value)
     return [value]
-
 
 def labels_to_text(labels, label_names):
     label_values = []
@@ -87,22 +77,18 @@ def labels_to_text(labels, label_names):
             label_id = int(label)
         except (TypeError, ValueError):
             continue
-
         if 0 <= label_id < len(label_names):
             label_values.append(clean_text(label_names[label_id]))
         else:
             label_values.append(str(label_id))
-
     label_values = sorted(set(value for value in label_values if value))
     return "; ".join(label_values)
-
 
 def load_and_sample_eurlex(args):
     print("=" * 60)
     print("Loading EUR-LEX parquet")
     print("=" * 60)
     print(f"parquet_path: {args.parquet_path}")
-
     dataset = load_dataset(
         "parquet",
         data_files=args.parquet_path,
@@ -110,42 +96,34 @@ def load_and_sample_eurlex(args):
     )
     print(f"raw rows: {len(dataset)}")
     print(f"raw columns: {dataset.column_names}")
-
     required_columns = {"text", "labels"}
     missing_columns = required_columns.difference(dataset.column_names)
     if missing_columns:
         raise ValueError(f"Missing required columns: {sorted(missing_columns)}")
-
     label_names = get_label_names(dataset)
     if not label_names:
         raise ValueError("Could not read EUR-LEX ClassLabel names from labels feature")
     print(f"label classes: {len(label_names)}")
-
     def has_valid_eurlex_fields(example):
         legal_text = clean_text(example.get("text"))
         label_text = labels_to_text(example.get("labels"), label_names)
         return len(legal_text) >= args.min_text_chars and bool(label_text)
-
     dataset = dataset.filter(
         has_valid_eurlex_fields,
         num_proc=args.num_proc,
         desc="Filtering invalid EUR-LEX examples",
     )
     print(f"rows after filtering: {len(dataset)}")
-
     if len(dataset) < args.sample_size:
         raise ValueError(
             f"Not enough valid EUR-LEX examples: requested {args.sample_size}, got {len(dataset)}"
         )
-
     sampled = dataset.shuffle(seed=args.seed).select(range(args.sample_size))
     print(f"sampled rows: {len(sampled)}")
     return sampled, label_names
 
-
 def format_dataset(sampled, tokenizer, label_names, args):
     eos = tokenizer.eos_token or ""
-
     def format_batch(examples):
         texts = []
         for legal_text, labels in zip(examples["text"], examples["labels"]):
@@ -162,7 +140,6 @@ def format_dataset(sampled, tokenizer, label_names, args):
             )
             texts.append(text + eos)
         return {"text": texts}
-
     return sampled.map(
         format_batch,
         batched=True,
@@ -171,13 +148,11 @@ def format_dataset(sampled, tokenizer, label_names, args):
         desc="Formatting EUR-LEX examples",
     )
 
-
 def tokenize_and_split(formatted, tokenizer, args):
     split = formatted.train_test_split(
         test_size=1.0 - args.train_ratio,
         seed=args.seed,
     )
-
     def tokenize_batch(examples):
         tokenized = tokenizer(
             examples["text"],
@@ -188,7 +163,6 @@ def tokenize_and_split(formatted, tokenizer, args):
         )
         tokenized["labels"] = [input_ids.copy() for input_ids in tokenized["input_ids"]]
         return tokenized
-
     tokenized = split.map(
         tokenize_batch,
         batched=True,
@@ -196,10 +170,8 @@ def tokenize_and_split(formatted, tokenizer, args):
         num_proc=args.num_proc,
         desc="Tokenizing EUR-LEX examples",
     )
-
     train_dataset = tokenized["train"]
     val_dataset = tokenized["test"]
-
     train_dataset.set_format(
         type="torch",
         columns=["input_ids", "attention_mask", "labels"],
@@ -208,13 +180,10 @@ def tokenize_and_split(formatted, tokenizer, args):
         type="torch",
         columns=["input_ids", "attention_mask", "labels"],
     )
-
     return train_dataset, val_dataset
-
 
 def save_outputs(train_dataset, val_dataset, tokenizer, label_names, args):
     output_dir = Path(args.output_dir)
-
     if output_dir.exists():
         if not args.overwrite:
             raise FileExistsError(
@@ -222,16 +191,12 @@ def save_outputs(train_dataset, val_dataset, tokenizer, label_names, args):
                 "Pass --overwrite to replace it."
             )
         shutil.rmtree(output_dir)
-
     output_dir.mkdir(parents=True, exist_ok=True)
-
     train_path = output_dir / "train"
     val_path = output_dir / "val"
-
     train_dataset.save_to_disk(str(train_path))
     val_dataset.save_to_disk(str(val_path))
     tokenizer.save_pretrained(str(output_dir))
-
     stats = {
         "source_parquet": args.parquet_path,
         "model_path": args.model_path,
@@ -248,10 +213,8 @@ def save_outputs(train_dataset, val_dataset, tokenizer, label_names, args):
         "format": "causal_language_modeling",
         "task_format": "eurlex_multilabel_legal_document_classification",
     }
-
     with open(output_dir / "stats.json", "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2, ensure_ascii=False)
-
     print("=" * 60)
     print("Saved processed EUR-LEX dataset")
     print("=" * 60)
@@ -259,7 +222,6 @@ def save_outputs(train_dataset, val_dataset, tokenizer, label_names, args):
     print(f"train: {train_path} ({len(train_dataset)} samples)")
     print(f"val:   {val_path} ({len(val_dataset)} samples)")
     print(f"stats: {output_dir / 'stats.json'}")
-
 
 def show_preview(train_dataset, tokenizer, num_examples=2):
     print("=" * 60)
@@ -271,12 +233,10 @@ def show_preview(train_dataset, tokenizer, num_examples=2):
         print(f"\n--- example {idx + 1} ---")
         print(text[:1000])
 
-
 def main():
     setup_environment()
     args = parse_args()
     require_valid_args(args)
-
     print("=" * 60)
     print("Loading tokenizer")
     print("=" * 60)
@@ -285,14 +245,11 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-
     sampled, label_names = load_and_sample_eurlex(args)
     formatted = format_dataset(sampled, tokenizer, label_names, args)
     train_dataset, val_dataset = tokenize_and_split(formatted, tokenizer, args)
-
     show_preview(train_dataset, tokenizer)
     save_outputs(train_dataset, val_dataset, tokenizer, label_names, args)
-
 
 if __name__ == "__main__":
     main()
