@@ -47,7 +47,7 @@ subspace_method="full"  # [full, fisher_only, ca_only]
 # insert watermark
 run_lineagemark_insert () {
     log_file="${log_path}-insert-mark1-full.log"
-    python -u pipelines_multi/dssa_insert_watermark_multi.py \
+    python -u dssa_multi/dssa_insert_watermark_multi.py \
     --model $model_path \
     --k $k \
     --hidden_size $hidden_size \
@@ -71,13 +71,13 @@ run_lineagemark_insert () {
     --seed $seed \
     --save_model $save_model \
     --save_subspace $save_subspace > "$log_file" 2>&1
-    echo "=============== dssa insert done! ${model_path} --> ${save_model} "
+    echo "=============== LineageMark insert done! ${model_path} --> ${save_model} "
 }
 
 # extract watermark
 run_lineagemark_extract () {
     log_file="${log_path}-extract-mark1-ca.log"
-    python -u pipelines_multi/dssa_extract_watermark_multi.py \
+    python -u dssa_multi/dssa_extract_watermark_multi.py \
         --password "$password" \
         --model "$save_model" \
         --hidden_size "$hidden_size" \
@@ -91,7 +91,7 @@ run_lineagemark_extract () {
         --chunk_length 8 \
         --seed "$seed" > "$log_file" 2>&1
     grep -E "Real watermark|Extract watermark|Extract ACC" "$log_file" | tail -3
-    echo "=============== dssa extract done! --> $save_model "
+    echo "=============== LineageMark extract done! --> $save_model "
 }
 
 quant_model () {
