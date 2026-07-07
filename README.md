@@ -29,22 +29,24 @@ The current implementation uses DSSA-based matrix-level subspace selection and k
 ## Repository Structure
 
 ```text
-LineageMark-main/
-|-- bash_multi/                 # Example shell scripts for multi-user insertion and extraction
-|-- dssa_multi/                 # Command-line entry points for DSSA watermark insertion/extraction
+LineageMark/
+|-- bash_multi/                 # Optional shell helpers for watermark experiments
+|-- dssa_multi/                 # Command-line entry points for LineageMark, ELLMark, and EmMark
+|-- eval/                       # PPL, zero-shot, and stable-space evaluation scripts
+|-- figures/                    # README and paper figures
+|-- finetune_model/             # Full-parameter fine-tuning scripts
 |-- lib_multi/                  # Core implementation: subspace selection, insertion, extraction, utilities
-|-- prepare_law/                # Dataset preprocessing scripts for legal-domain fine-tuning
-|-- prepare_math/               # Dataset preprocessing scripts for math-domain fine-tuning
-|-- prepare_pub/                # Dataset preprocessing scripts for biomedical-domain fine-tuning
-|-- pubmed_ft/                  # Full-parameter fine-tuning examples for biomedical experiments
-|-- ppl/                        # Perplexity and token-level evaluation scripts
-|-- zero_shot/                  # Zero-shot benchmark evaluation scripts
+|-- prepare_data/
+|   |-- law/                    # Legal-domain preprocessing scripts
+|   |-- math/                   # Math-domain preprocessing scripts
+|   `-- pubmed/                 # Biomedical-domain preprocessing scripts
 |-- download_model_from_huggingface.py
 |-- download_dataset_from_huggingface.py
-|-- full_finetune_125m.py       # Full-parameter fine-tuning example
 |-- requirements.txt
 `-- README.md
 ```
+
+All commands below assume that they are executed from the repository root.
 
 ## Environment Setup
 
@@ -53,11 +55,13 @@ The experiments are intended to run on a CUDA GPU environment such as AutoDL. Th
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/<your-user-name>/LineageMark-main.git
-cd LineageMark-main
+cd /root/autodl-tmp
+git clone https://github.com/xuxiaofeng0411/LineageMark.git
+cd LineageMark
+mkdir -p outputs logs
 ```
 
-Replace `<your-user-name>` with your GitHub user name or organization name.
+The `outputs/` and `logs/` directories are used by the commands below to save regenerated evaluation JSON files and command logs inside the current project.
 
 ### 2. Create and activate a virtual environment
 
@@ -106,19 +110,22 @@ python -u download_model_from_huggingface.py \
   --repo_id facebook/opt-125m
 ```
 
-By default, this script saves the model under:
-
-```text
-../models/facebook/opt-125m
-```
-
-Many experiment scripts in this repository use paths such as:
+When this command is run from `/root/autodl-tmp/LineageMark`, the model is saved under:
 
 ```text
 /root/autodl-tmp/models/facebook/opt-125m
 ```
 
-Therefore, before running experiments, either move the downloaded model to the expected path or modify the path variables in the corresponding scripts.
+Most experiment commands in this README use the following path convention:
+
+```text
+/root/autodl-tmp/models/...     # model checkpoints
+/root/autodl-tmp/datasets/...   # raw and processed datasets
+./outputs/...                   # regenerated JSON results in this project
+./logs/...                      # command logs in this project
+```
+
+If your workspace uses a different layout, replace these paths consistently in the commands.
 
 ### 2. Prepare domain fine-tuning datasets
 
@@ -127,7 +134,7 @@ The watermark insertion step uses WikiText-2 as the default DSSA calibration dat
 Biomedical example:
 
 ```bash
-python -u prepare_pub/prepare_pubmed_dataset.py \
+python -u prepare_data/pubmed/prepare_pubmed_dataset.py \
   --parquet_path /root/autodl-tmp/datasets/train-00000-of-00052.parquet \
   --model_path /root/autodl-tmp/models/facebook/opt-125m \
   --output_dir /root/autodl-tmp/datasets/processed_pubmed1_35k \
@@ -140,7 +147,7 @@ python -u prepare_pub/prepare_pubmed_dataset.py \
 Math example:
 
 ```bash
-python -u prepare_math/prepare_mathinstruct_dataset.py \
+python -u prepare_data/math/prepare_mathinstruct_dataset.py \
   --json_path /root/autodl-tmp/datasets/MathInstruct.json \
   --model_path /root/autodl-tmp/models/facebook/opt-125m \
   --output_dir /root/autodl-tmp/datasets/processed_math1_35k \
@@ -153,7 +160,7 @@ python -u prepare_math/prepare_mathinstruct_dataset.py \
 Legal-domain example:
 
 ```bash
-python -u prepare_law/prepare_ledgar_dataset.py \
+python -u prepare_data/law/prepare_ledgar_dataset.py \
   --parquet_path /root/autodl-tmp/datasets/law1.parquet \
   --model_path /root/autodl-tmp/models/facebook/opt-125m \
   --output_dir /root/autodl-tmp/datasets/processed_law1_35k \
@@ -167,10 +174,10 @@ The preprocessing scripts tokenize raw data and save Hugging Face `Dataset` obje
 
 ## Insert a User Watermark
 
-The insertion entry point is:
+The LineageMark insertion entry point is:
 
 ```text
-dssa_multi/dssa_insert_watermark_multi.py
+dssa_multi/lineagemark_insert_watermark_multi.py
 ```
 
 Example for the first user:
@@ -180,7 +187,7 @@ export CUDA_VISIBLE_DEVICES=0
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-python -u dssa_multi/dssa_insert_watermark_multi.py \
+python -u dssa_multi/lineagemark_insert_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m \
   --save_model /root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
   --save_subspace /root/autodl-tmp/models/facebook/opt-125m-mark1-subspace.pt \
@@ -203,7 +210,8 @@ python -u dssa_multi/dssa_insert_watermark_multi.py \
   --wm_method projection \
   --projection_margin 0.5 \
   --projection_max_update 0.0 \
-  --data_independent_extract
+  --data_independent_extract \
+  2>&1 | tee outputs/insert_user1.log
 ```
 
 Important arguments:
@@ -218,7 +226,7 @@ Important arguments:
 | `--password` | User secret key. It controls layer selection, row selection, coordinate mapping, and projection signs. |
 | `--k` | Number of DSSA subspace directions selected for each matrix. |
 | `--tau_lower`, `--tau_upper` | Spectral truncation range used during DSSA subspace selection. |
-| `--select_ratio` | Fraction of columns selected per matrix row for the editable weight mask. |
+| `--select_ratio` | Fraction of matrix coordinates selected globally for the editable weight mask. |
 | `--nsamples` | Number of calibration samples used for DSSA statistics. |
 | `--wm_method` | Watermark method. The default recommended method is `projection`. Other options are `mean_diff` and `bitflip`. |
 | `--data_independent_extract` | Enables blind extraction. The extractor can verify the watermark using only the model, password, and expected watermark string. |
@@ -230,16 +238,16 @@ The insertion process has two phases:
 
 ## Extract and Verify a Watermark
 
-The extraction entry point is:
+The LineageMark extraction entry point is:
 
 ```text
-dssa_multi/dssa_extract_watermark_multi.py
+dssa_multi/lineagemark_extract_watermark_multi.py
 ```
 
 Example:
 
 ```bash
-python -u dssa_multi/dssa_extract_watermark_multi.py \
+python -u dssa_multi/lineagemark_extract_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
   --hidden_size 768 \
   --watermark mark \
@@ -251,7 +259,8 @@ python -u dssa_multi/dssa_extract_watermark_multi.py \
   --projection_margin 0.5 \
   --data_independent_extract \
   --mode simple \
-  --seed 100
+  --seed 100 \
+  2>&1 | tee outputs/extract_user1.log
 ```
 
 The script prints:
@@ -262,19 +271,20 @@ Extract watermark:   ...
 Extract ACC:         ...
 ```
 
-`Extract ACC` is the bit-level accuracy between the expected watermark and the extracted watermark. A valid user should obtain a high extraction accuracy. To estimate false positives, run the same extraction command with random wrong passwords. The script `bash_multi/bash_multi.sh` contains an example set of random passwords for false-positive testing.
+`Extract ACC` is the bit-level accuracy between the expected watermark and the extracted watermark. A valid user should obtain a high extraction accuracy. To estimate false positives, run the same extraction command with random wrong passwords and save each log under `outputs/` or `logs/`.
 
 If you do not use `--data_independent_extract`, you need to provide the saved DSSA map:
 
 ```bash
-python -u dssa_multi/dssa_extract_watermark_multi.py \
+python -u dssa_multi/lineagemark_extract_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
   --hidden_size 768 \
   --watermark mark \
   --password asdfqwer \
   --watermark_map /root/autodl-tmp/models/facebook/opt-125m-mark1-subspace.pt \
   --wm_method projection \
-  --mode simple
+  --mode simple \
+  2>&1 | tee outputs/extract_user1_with_map.log
 ```
 
 ## Run a Multi-user Model Lineage Experiment
@@ -296,9 +306,10 @@ In this setting, the later model should still allow historical users to verify t
 ### Stage 1: user 1 inserts a watermark
 
 ```bash
-python -u dssa_multi/dssa_insert_watermark_multi.py \
+python -u dssa_multi/lineagemark_insert_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m \
   --save_model /root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
+  --save_subspace /root/autodl-tmp/models/facebook/opt-125m-mark1-subspace.pt \
   --hidden_size 768 \
   --watermark mark \
   --password asdfqwer \
@@ -316,12 +327,13 @@ python -u dssa_multi/dssa_insert_watermark_multi.py \
   --dssa_block_chunk 2 \
   --dssa_calib_batch_size 8 \
   --nsamples 128 \
-  --data_independent_extract
+  --data_independent_extract \
+  2>&1 | tee outputs/stage1_insert_user1.log
 ```
 
 ### Stage 2: full-parameter fine-tuning derives a new model
 
-Edit the constants at the beginning of `full_finetune_125m.py`:
+Edit the constants at the beginning of `finetune_model/full_finetune_125m.py`:
 
 ```python
 DATA_PATH = "/root/autodl-tmp/datasets/processed_math1_35k"
@@ -333,7 +345,8 @@ EXPECTED_WATERMARK_DTYPE = torch.float16
 Then run:
 
 ```bash
-python -u full_finetune_125m.py
+python -u finetune_model/full_finetune_125m.py \
+  2>&1 | tee outputs/stage2_finetune_user1.log
 ```
 
 The fine-tuning code intentionally keeps the saved model in `float16`. This is important because precision conversion, such as converting a watermarked `float16` model to `bfloat16`, may weaken or destroy fine-grained watermark signals.
@@ -341,9 +354,10 @@ The fine-tuning code intentionally keeps the saved model in `float16`. This is i
 ### Stage 3: user 2 inserts a new watermark into the derived model
 
 ```bash
-python -u dssa_multi/dssa_insert_watermark_multi.py \
+python -u dssa_multi/lineagemark_insert_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m-mark1-nomark-ft-math \
   --save_model /root/autodl-tmp/models/facebook/opt-125m-mark2-nomark \
+  --save_subspace /root/autodl-tmp/models/facebook/opt-125m-mark2-subspace.pt \
   --hidden_size 768 \
   --watermark bear \
   --password qihdnbji \
@@ -361,7 +375,8 @@ python -u dssa_multi/dssa_insert_watermark_multi.py \
   --dssa_block_chunk 2 \
   --dssa_calib_batch_size 8 \
   --nsamples 128 \
-  --data_independent_extract
+  --data_independent_extract \
+  2>&1 | tee outputs/stage3_insert_user2.log
 ```
 
 You can continue this process for user 3, user 4, and later users. Use a different `watermark`, `password`, and `seed` for each user.
@@ -371,7 +386,7 @@ You can continue this process for user 3, user 4, and later users. Use a differe
 For example, verify user 1 on a later-stage model:
 
 ```bash
-python -u dssa_multi/dssa_extract_watermark_multi.py \
+python -u dssa_multi/lineagemark_extract_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m-mark4-nomark \
   --hidden_size 768 \
   --watermark mark \
@@ -382,13 +397,14 @@ python -u dssa_multi/dssa_extract_watermark_multi.py \
   --position_num 12 \
   --chunk_length 8 \
   --data_independent_extract \
-  --mode simple
+  --mode simple \
+  2>&1 | tee outputs/verify_user1_on_mark4.log
 ```
 
 Verify user 2:
 
 ```bash
-python -u dssa_multi/dssa_extract_watermark_multi.py \
+python -u dssa_multi/lineagemark_extract_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m-mark4-nomark \
   --hidden_size 768 \
   --watermark bear \
@@ -399,31 +415,38 @@ python -u dssa_multi/dssa_extract_watermark_multi.py \
   --position_num 12 \
   --chunk_length 8 \
   --data_independent_extract \
-  --mode simple
+  --mode simple \
+  2>&1 | tee outputs/verify_user2_on_mark4.log
 ```
 
 If both users obtain high extraction accuracy, the later model contains evidence of both users' historical contributions.
 
 ## Using the Provided Shell Script
 
-The script `bash_multi/bash_multi.sh` provides a compact way to run insertion, extraction, and false-positive verification.
+The script `bash_multi/bash_multi.sh` provides a compact way to run insertion, extraction, and false-positive verification. The direct commands above are the recommended reviewer-facing reproduction commands because they explicitly use the current LineageMark entry points:
 
-Before running it, edit these variables:
+```text
+dssa_multi/lineagemark_insert_watermark_multi.py
+dssa_multi/lineagemark_extract_watermark_multi.py
+```
+
+If you use `bash_multi/bash_multi.sh`, first check these variables:
 
 ```bash
 model_path="/root/autodl-tmp/models/facebook/opt-125m"
-save_model="/root/autodl-tmp/models/facebook/pubmed/opt-125m-mark4-nomark"
+save_model="/root/autodl-tmp/models/facebook/opt-125m-mark1-full"
+save_subspace="/root/autodl-tmp/models/facebook/opt-125m-mark1-subspace-full.pt"
 hidden_size=768
 watermark="mark"
 password="asdfqwer"
 seed=100
 ```
 
-Then uncomment the commands you need:
+Then run the LineageMark helper functions:
 
 ```bash
-run_dssa_insert
-run_dssa_extract
+run_lineagemark_insert
+run_lineagemark_extract
 ```
 
 Run:
@@ -432,45 +455,62 @@ Run:
 bash bash_multi/bash_multi.sh
 ```
 
-This script is useful for batch experiments, especially when testing many wrong passwords to measure false-positive behavior.
+This script is useful for batch experiments, especially when testing many wrong passwords to measure false-positive behavior. If an older local copy of the script still calls `dssa_insert_watermark_multi.py` or `dssa_extract_watermark_multi.py`, replace those names with `lineagemark_insert_watermark_multi.py` and `lineagemark_extract_watermark_multi.py`.
 
 ## Evaluate Model Utility
 
-Watermarking should preserve the model's normal language modeling ability. This repository includes perplexity and zero-shot evaluation scripts.
+Watermarking should preserve the model's normal language modeling ability. This repository includes perplexity and zero-shot evaluation scripts under `eval/`.
 
 ### Perplexity evaluation
 
-For PubMed-style experiments:
+Use the generic PPL evaluator and pass model and dataset paths explicitly:
 
 ```bash
-python -u ppl/ppl_result_pubmed.py \
+python -u eval/ppl_result.py \
+  --model original=/root/autodl-tmp/models/facebook/opt-125m \
+  --model mark1=/root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
+  --dataset pubmed1=/root/autodl-tmp/datasets/processed_pubmed1_35k \
   --split val \
   --block_size 512 \
   --domain_batch_size 2 \
   --wikitext_batch_size 2 \
-  --output_json /root/autodl-tmp/project12/outputs/ppl_result_pubmed.json
+  --output_json outputs/ppl_result_pubmed1.json \
+  2>&1 | tee outputs/ppl_result_pubmed1.log
 ```
 
-Before running, edit `MODEL_SPECS` and `DOMAIN_DATASETS` in `ppl/ppl_result_pubmed.py` so that they point to your actual model and dataset paths.
+The regenerated PPL result is saved to:
+
+```text
+outputs/ppl_result_pubmed1.json
+```
+
+The repository also contains domain-specific wrappers such as `eval/ppl_result_pubmed.py`, `eval/ppl_result_law.py`, and `eval/ppl_result_math.py`. Before using those wrappers, check the hard-coded `MODEL_SPECS`, dataset paths, and `DEFAULT_OUTPUT_JSON` values at the top of the file.
 
 ### Zero-shot evaluation
 
 ```bash
-python -u zero_shot/zero_shot_result.py \
+python -u eval/zero_shot_result.py \
+  --model original=/root/autodl-tmp/models/facebook/opt-125m \
+  --model watermark_1=/root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
+  --model watermark_2=/root/autodl-tmp/models/facebook/opt-125m-mark2-nomark \
+  --model watermark_4=/root/autodl-tmp/models/facebook/opt-125m-mark4-nomark \
   --tasks piqa,hellaswag,winogrande \
   --batch_size 16 \
   --max_length 512 \
-  --output_json /root/autodl-tmp/project12/outputs/multi_stage_zero_shot_results.json
+  --output_json outputs/multi_stage_zero_shot_results.json \
+  2>&1 | tee outputs/multi_stage_zero_shot_results.log
 ```
 
-You can override the default model list by passing `--model` multiple times:
+The regenerated zero-shot result is saved to:
+
+```text
+outputs/multi_stage_zero_shot_results.json
+```
+
+If some listed checkpoints are not available, either remove the corresponding `--model name=path` argument or add:
 
 ```bash
-python -u zero_shot/zero_shot_result.py \
-  --model original=/root/autodl-tmp/models/facebook/opt-125m \
-  --model mark1=/root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
-  --model mark4=/root/autodl-tmp/models/facebook/opt-125m-mark4-nomark \
-  --tasks piqa,hellaswag,winogrande
+--skip_missing_models
 ```
 
 ## Practical Notes
@@ -519,38 +559,51 @@ A non-user or wrong key should use an incorrect password. The extracted accuracy
 
 ### Path configuration
 
-Many scripts currently contain hard-coded AutoDL paths such as:
+Most commands in this README use AutoDL paths such as:
 
 ```text
 /root/autodl-tmp/models/...
 /root/autodl-tmp/datasets/...
 ```
 
-Before running an experiment, check and update these paths according to your AutoDL workspace.
+Before running an experiment, check and update these paths according to your AutoDL workspace. The reviewer-facing commands save regenerated logs and JSON outputs under the current project:
+
+```text
+outputs/
+logs/
+```
 
 ## Core Implementation Files
 
 - `lib_multi/subspace_multi.py`: matrix-level DSSA statistics, generalized eigenvalue problem, spectral truncation, and mask construction.
-- `lib_multi/insert_multi.py`: watermark insertion logic, including `projection`, `mean_diff`, and `bitflip`.
-- `lib_multi/extract_multi.py`: watermark extraction and bit-level accuracy calculation.
+- `lib_multi/lineagemark_insert_multi.py`: LineageMark watermark insertion logic, including `projection`, `mean_diff`, and `bitflip`.
+- `lib_multi/lineagemark_extract_multi.py`: LineageMark watermark extraction and bit-level accuracy calculation.
 - `lib_multi/utils_multi.py`: model loading, layer traversal, keyed coordinate mapping, binary weight operations, and quantized weight conversion.
-- `dssa_multi/dssa_insert_watermark_multi.py`: command-line interface for DSSA selection and watermark insertion.
-- `dssa_multi/dssa_extract_watermark_multi.py`: command-line interface for watermark extraction.
+- `dssa_multi/lineagemark_insert_watermark_multi.py`: command-line interface for DSSA selection and LineageMark watermark insertion.
+- `dssa_multi/lineagemark_extract_watermark_multi.py`: command-line interface for LineageMark watermark extraction.
+- `dssa_multi/ellmark_insert_watermark_multi.py` and `dssa_multi/ellmark_extract_watermark_multi.py`: ELLMark baseline entry points.
+- `dssa_multi/emmark_insert_watermark_multi.py` and `dssa_multi/emmark_extract_watermark_multi.py`: EmMark baseline entry points.
 
 ## Minimal Reproducible Workflow
 
-The following is the shortest complete workflow for one-user insertion and extraction on OPT-125M:
+The following is the shortest complete workflow for one-user insertion and extraction on OPT-125M. It downloads the model, inserts one watermark, extracts it, and saves logs under `outputs/`.
 
 ```bash
+cd /root/autodl-tmp
+git clone https://github.com/xuxiaofeng0411/LineageMark.git
+cd LineageMark
+mkdir -p outputs logs
+
 conda create -n lineagemark python=3.10 -y
 conda activate lineagemark
 pip install -r requirements.txt
 
 python -u download_model_from_huggingface.py --repo_id facebook/opt-125m
 
-python -u dssa_multi/dssa_insert_watermark_multi.py \
+python -u dssa_multi/lineagemark_insert_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m \
   --save_model /root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
+  --save_subspace /root/autodl-tmp/models/facebook/opt-125m-mark1-subspace.pt \
   --hidden_size 768 \
   --watermark mark \
   --password asdfqwer \
@@ -568,9 +621,10 @@ python -u dssa_multi/dssa_insert_watermark_multi.py \
   --dssa_block_chunk 2 \
   --dssa_calib_batch_size 8 \
   --nsamples 128 \
-  --data_independent_extract
+  --data_independent_extract \
+  2>&1 | tee outputs/minimal_insert.log
 
-python -u dssa_multi/dssa_extract_watermark_multi.py \
+python -u dssa_multi/lineagemark_extract_watermark_multi.py \
   --model /root/autodl-tmp/models/facebook/opt-125m-mark1-nomark \
   --hidden_size 768 \
   --watermark mark \
@@ -581,7 +635,8 @@ python -u dssa_multi/dssa_extract_watermark_multi.py \
   --wm_method projection \
   --projection_margin 0.5 \
   --data_independent_extract \
-  --mode simple
+  --mode simple \
+  2>&1 | tee outputs/minimal_extract.log
 ```
 
 If the model paths are correct and the environment is properly configured, the final command should print a high `Extract ACC`.
