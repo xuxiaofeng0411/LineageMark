@@ -47,7 +47,7 @@ subspace_method="full"  # [full, fisher_only, ca_only]
 # insert watermark
 run_lineagemark_insert () {
     log_file="${log_path}-insert-mark1-full.log"
-    python -u dssa_multi/dssa_insert_watermark_multi.py \
+    python -u dssa_multi/lineagemark_insert_watermark_multi.py \
     --model $model_path \
     --k $k \
     --hidden_size $hidden_size \
@@ -77,7 +77,7 @@ run_lineagemark_insert () {
 # extract watermark
 run_lineagemark_extract () {
     log_file="${log_path}-extract-mark1-ca.log"
-    python -u dssa_multi/dssa_extract_watermark_multi.py \
+    python -u dssa_multi/lineagemark_extract_watermark_multi.py \
         --password "$password" \
         --model "$save_model" \
         --hidden_size "$hidden_size" \
